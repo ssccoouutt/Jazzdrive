@@ -452,7 +452,7 @@ def upload_to_jazzdrive(file_path):
             driver.execute_script("arguments[0].style.display = 'block';", upload_input)
             time.sleep(1)
             
-        upload_input.send_keys(os.path.abspath(file_path)
+        upload_input.send_keys(os.path.abspath(file_path))
         time.sleep(10)  # Wait longer for upload
         
         # Check for success indicators
