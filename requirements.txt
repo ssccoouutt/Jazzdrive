@@ -1,8 +1,3 @@
-
 python-telegram-bot==20.7
 selenium==4.15.2
-yt-dlp==2023.11.16
-requests==2.31.0
 aiohttp==3.9.1
-nest-asyncio==1.5.8
-webdriver-manager==4.0.1
