@@ -621,8 +621,8 @@ async def main():
             ensure_cookies()
             await run_bot()
             break
-        except SessionNotCreatedException as e:
-            logger.error(f"Session creation failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+        except Exception as e:
+            logger.error(f"Error (attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
                 logger.info(f"Retrying in {retry_delay} seconds...")
                 await asyncio.sleep(retry_delay)
@@ -635,27 +635,31 @@ async def main():
                         pass
                     driver = None
             else:
-                logger.error("Max retries exceeded for session creation")
+                logger.error("Max retries exceeded")
                 raise
-        except Exception as e:
-            logger.error(f"Fatal error: {str(e)}")
-            traceback.print_exc()
-            break
-    finally:
-        logger.info("Starting cleanup process...")
-        
-        global runner, site, driver
+    
+    # Cleanup outside the try-except block
+    logger.info("Starting cleanup process...")
+    
+    global runner, site, driver
+    try:
         if site:
             await site.stop()
+    except:
+        pass
+    
+    try:
         if runner:
             await runner.cleanup()
+    except:
+        pass
+    
+    try:
         if driver:
-            try:
-                driver.quit()
-            except:
-                pass
-            
-        logger.info("Cleanup completed")
-
+            driver.quit()
+    except:
+        pass
+        
+    logger.info("Cleanup completed")
 if __name__ == "__main__":
     asyncio.run(main())
