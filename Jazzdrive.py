@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 
 def initialize_driver():
     """Initialize Chrome WebDriver with unique user data directory"""
+    global driver  # Declare driver as global here
+    
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -73,7 +75,8 @@ def initialize_driver():
     # Set binary location
     chrome_options.binary_location = os.environ.get('GOOGLE_CHROME_BIN', '/usr/bin/google-chrome')
     
-    return webdriver.Chrome(options=chrome_options)
+    driver = webdriver.Chrome(options=chrome_options)
+    return driver
 
 def download_file(url, save_path=None):
     """Download file with proper filename handling"""
