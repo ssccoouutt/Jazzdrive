@@ -23,7 +23,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, SessionNotCreatedException
 import yt_dlp
 import time
-import uuid
 
 # Configuration
 TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8"
@@ -53,7 +52,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver with unique user data directory"""
+    """Initialize Chrome WebDriver"""
     global driver
     
     chrome_options = Options()
@@ -62,10 +61,6 @@ def initialize_driver():
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
-    
-    # Add unique user data directory to prevent conflicts
-    user_data_dir = f"/tmp/chrome_user_data_{uuid.uuid4().hex}"
-    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
     
     # Additional options for stability
     chrome_options.add_argument("--no-first-run")
@@ -457,7 +452,7 @@ def upload_to_jazzdrive(file_path):
             driver.execute_script("arguments[0].style.display = 'block';", upload_input)
             time.sleep(1)
             
-        upload_input.send_keys(os.path.abspath(file_path))
+        upload_input.send_keys(os.path.abspath(file_path)
         time.sleep(10)  # Wait longer for upload
         
         # Check for success indicators
