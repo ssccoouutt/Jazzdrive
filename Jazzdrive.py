@@ -19,7 +19,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from webdriver_manager.chrome import ChromeDriverManager
 import yt_dlp
 import time
 
@@ -40,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize headless Chrome WebDriver using webdriver-manager."""
+    """Initialize headless Chrome WebDriver for Linux cloud/CI environments."""
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -48,20 +47,20 @@ def initialize_driver():
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-software-rasterizer")
-    driver = webdriver.Chrome(ChromeDriverManager().install(), options=chrome_options)
+    # If using chromium:
+    # chrome_options.binary_location = "/usr/bin/chromium-browser"
+    # If using google-chrome:
+    chrome_options.binary_location = "/usr/bin/google-chrome"
+    driver = webdriver.Chrome(options=chrome_options)
     logger.info("Chrome driver initialized.")
     return driver
 
 def download_file(url, save_path=None):
-    """Download file from a URL."""
     try:
         with requests.get(url, stream=True) as response:
             response.raise_for_status()
             if not save_path:
-                if 'content-disposition' in response.headers:
-                    filename = re.findall('filename="?(.+)"?', response.headers['content-disposition'])[0]
-                else:
-                    filename = os.path.basename(url.split('?'))
+                filename = os.path.basename(url.split('?')[0])
                 save_path = os.path.join(tempfile.gettempdir(), filename)
             with open(save_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -83,14 +82,13 @@ def ensure_cookies():
         logger.error(f"Error loading cookies: {e}")
 
 def has_audio(filename):
-    """Check if file has audio."""
     try:
         result = subprocess.run(
             ['ffprobe', '-i', filename, '-show_streams', '-select_streams', 'a', '-loglevel', 'error'],
             capture_output=True, text=True
         )
         return "codec_type=audio" in result.stdout
-    except Exception as e:
+    except Exception:
         return False
 
 def get_youtube_qualities(url):
@@ -107,12 +105,10 @@ def get_youtube_qualities(url):
             return {}
         formats = info['formats']
         out = {}
-        # Progressive formats
         for fmt in formats:
             if fmt.get('acodec') != 'none' and fmt.get('vcodec') != 'none' and fmt.get('height'):
                 label = f"{fmt['height']}p ({fmt.get('format_id')}, {fmt.get('ext')})"
                 out[label] = fmt.get('format_id')
-        # DASH formats
         for fmt in formats:
             if fmt.get('vcodec') != 'none' and fmt.get('acodec') == 'none' and fmt.get('height'):
                 label = f"{fmt['height']}p ({fmt.get('format_id')}, {fmt.get('ext')}) [Merged]"
@@ -162,7 +158,6 @@ def yt_download_and_merge(url, fmt_string):
         return None, None
 
 def get_gallery_links():
-    """Get links from JazzDrive gallery via Selenium."""
     try:
         driver.get("https://cloud.jazzdrive.com.pk/#gallery")
         time.sleep(5)
@@ -193,7 +188,7 @@ def get_gallery_links():
                     file_links.append(f"{text}: {href}")
         return file_links[:20]
     except Exception as e:
-        print(f"[ERROR] Gallery links: {str(e)}")
+        print(f"Gallery error: {str(e)}")
         return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
