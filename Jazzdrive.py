@@ -20,7 +20,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, SessionNotCreatedException
+from selenium.common.exceptions import TimeoutException
 import yt_dlp
 import time
 
@@ -52,27 +52,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver"""
-    global driver
-    
+    """Initialize Chrome WebDriver using a unique user data directory each time."""
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
-    
-    # Additional options for stability
-    chrome_options.add_argument("--no-first-run")
-    chrome_options.add_argument("--no-default-browser-check")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    
-    # Set binary location
-    chrome_options.binary_location = os.environ.get('GOOGLE_CHROME_BIN', '/usr/bin/google-chrome')
-    
-    driver = webdriver.Chrome(options=chrome_options)
-    return driver
+    chrome_options.add_argument("--remote-debugging-port=9222")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--disable-setuid-sandbox")
+    # Key fix: always use a fresh temp directory for user data
+    user_data_dir = tempfile.mkdtemp()
+    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+    print(f"[DEBUG] Using user-data-dir: {user_data_dir}")
+    return webdriver.Chrome(options=chrome_options)
 
 def download_file(url, save_path=None):
     """Download file with proper filename handling"""
@@ -80,23 +74,18 @@ def download_file(url, save_path=None):
     try:
         with requests.get(url, stream=True) as response:
             response.raise_for_status()
-            
-            # Get filename from Content-Disposition or from URL
             if not save_path:
                 if 'content-disposition' in response.headers:
                     filename = re.findall('filename="?(.+)"?', response.headers['content-disposition'])[0]
                 else:
-                    filename = os.path.basename(url.split('?')[0])
+                    filename = os.path.basename(url.split('?'))
                 save_path = os.path.join(tempfile.gettempdir(), filename)
-            
             with open(save_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-            
             print(f"[DEBUG] Download successful: {save_path}")
             return save_path
-            
     except Exception as e:
         logger.error(f"Failed to download {url}: {str(e)}")
         print("[ERROR]", e)
@@ -133,7 +122,7 @@ def get_youtube_qualities(url):
     ensure_cookies()
     ydl_opts = {
         'quiet': True,
-        'no-warnings': True,
+        'no_warnings': True,
         'extract_flat': False,
         'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None
     }
@@ -173,7 +162,6 @@ def yt_download_and_merge(url, fmt_string):
                 {'key': 'FFmpegMerger'},
                 {'key': 'FFmpegMetadata'}
             ]
-
         ydl_opts = {
             'format': fmt_string,
             'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
@@ -187,11 +175,9 @@ def yt_download_and_merge(url, fmt_string):
             'retries': 3
         }
         print("[DEBUG][yt-dlp] Options:", ydl_opts)
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             print("[DEBUG][yt-dlp] Info:", info)
-            
             search_patterns = [
                 os.path.join(temp_dir, "*.mp4"),
                 os.path.join(temp_dir, "*.mkv"),
@@ -199,21 +185,16 @@ def yt_download_and_merge(url, fmt_string):
                 os.path.join(temp_dir, "*.mp3"),
                 os.path.join(temp_dir, "*.m4a")
             ]
-            
             files = []
             for pattern in search_patterns:
                 files.extend(glob.glob(pattern))
-                
             if not files:
                 print("[ERROR] No completed media file found for upload.")
                 return None, None
-                
             filename = max(files, key=os.path.getsize)
-            
             if fmt_string != 'bestaudio/best' and not has_audio(filename):
                 print("[ERROR] Output video is mute. Skipping.")
                 return None, None
-                
             print(f"[DEBUG] Selected file for delivery: {filename}, size: {os.path.getsize(filename)}")
             return filename, info.get('title', None)
     except Exception as e:
@@ -228,8 +209,6 @@ def get_gallery_links():
     try:
         driver.get("https://cloud.jazzdrive.com.pk/#gallery")
         time.sleep(5)
-        
-        # Scroll to load all items
         last_height = driver.execute_script("return document.body.scrollHeight")
         while True:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -238,36 +217,29 @@ def get_gallery_links():
             if new_height == last_height:
                 break
             last_height = new_height
-        
-        # Find all file links
         file_links = []
         try:
             items = WebDriverWait(driver, 20).until(
                 EC.presence_of_all_elements_located((By.CSS_SELECTOR, "a[href*='file'], a[href*='download']"))
             )
-            
             for item in items:
                 href = item.get_attribute('href')
                 text = item.text.strip() or os.path.basename(href)
                 if href and not href.startswith('javascript:'):
                     file_links.append(f"{text}: {href}")
         except TimeoutException:
-            # Fallback: try to find any links
             items = driver.find_elements(By.TAG_NAME, "a")
             for item in items:
                 href = item.get_attribute('href')
                 text = item.text.strip() or os.path.basename(href) if href else "Unknown"
                 if href and not href.startswith('javascript:'):
                     file_links.append(f"{text}: {href}")
-                
-        return file_links[:20]  # Limit to 20 links
-        
+        return file_links[:20]
     except Exception as e:
         print(f"[ERROR] Failed to get gallery links: {str(e)}")
         return None
 
 async def health_check(request):
-    """Health check endpoint for Koyeb"""
     return web.Response(
         text=f"🤖 JazzDrive Bot is operational | Last active: {datetime.now()}",
         headers={"Content-Type": "text/plain"},
@@ -275,46 +247,36 @@ async def health_check(request):
     )
 
 async def root_handler(request):
-    """Root endpoint handler"""
     return web.Response(
         text="JazzDrive Bot is running",
         status=200
     )
 
 async def self_ping():
-    """Keep-alive mechanism for Koyeb"""
     while True:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{WEB_PORT}{HEALTH_CHECK_ENDPOINT}') as resp:
                     status = f"Status: {resp.status}" if resp.status != 200 else "Success"
                     logger.info(f"Keepalive ping {status}")
-                    
             with open('/tmp/last_active.txt', 'w') as f:
                 f.write(str(datetime.now()))
-                
         except Exception as e:
             logger.error(f"Keepalive error: {str(e)}")
-        
         await asyncio.sleep(PING_INTERVAL)
 
 async def run_webserver():
-    """Run the web server for health checks"""
-    global runner, site
-    
     app = web.Application()
     app.router.add_get(HEALTH_CHECK_ENDPOINT, health_check)
     app.router.add_get("/", root_handler)
-    
+    global runner, site
     runner = web.AppRunner(app)
     await runner.setup()
-    
     site = web.TCPSite(runner, '0.0.0.0', WEB_PORT)
     await site.start()
     logger.info(f"Health check server running on port {WEB_PORT}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start command handler"""
     await update.message.reply_text(
         "🚀 JazzDrive Upload Bot\n\n"
         "Send me a file link or YouTube URL to upload to JazzDrive\n\n"
@@ -322,17 +284,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start login process"""
     await update.message.reply_text("Please enter your Jazz mobile number (format: 03XXXXXXXXX):")
     return LOGIN_PHONE
 
 async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive phone number"""
     phone = update.message.text
     if not re.match(r'^03\d{9}$', phone):
         await update.message.reply_text("Invalid format. Please enter in 03XXXXXXXXX format:")
         return LOGIN_PHONE
-
     user_data['phone'] = phone
     try:
         driver.get("https://jazzdrive.com.pk/")
@@ -352,12 +311,10 @@ async def receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def receive_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive OTP"""
     otp = update.message.text
     if not re.match(r'^\d{4}$', otp):
         await update.message.reply_text("Invalid OTP format. Please enter 4 digits:")
         return LOGIN_OTP
-
     try:
         otp_input = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "otp")))
@@ -376,16 +333,14 @@ async def receive_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel operation"""
     await update.message.reply_text('Operation cancelled.')
     print("[DEBUG] Operation cancelled.")
     return ConversationHandler.END
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming messages"""
     url = update.message.text.strip()
     print(f"[DEBUG] Received message URL: {url}")
-    if driver is None or not hasattr(driver, 'current_url'):
+    if not hasattr(driver, 'current_url'):
         await update.message.reply_text("Please login first with /login")
         return
     if 'youtube.com' in url or 'youtu.be' in url:
@@ -394,20 +349,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_regular_url(update, context, url)
 
 async def handle_regular_url(update: Update, context: ContextTypes.DEFAULT_TYPE, url):
-    """Handle regular file URLs"""
     message = await update.message.reply_text("⏳ Downloading file...")
     file_path = download_file(url)
     if not file_path:
         await message.edit_text("❌ Failed to download file. Please check the URL and try again.")
         print("[ERROR] File download failed in handle_regular_url.")
         return
-    
     try:
         await message.edit_text("📤 Uploading to JazzDrive...")
         if upload_to_jazzdrive(file_path):
             await message.edit_text(f"✅ File uploaded successfully!\n\nFilename: {os.path.basename(file_path)}")
-            
-            # Get and send gallery links
             gallery_links = get_gallery_links()
             if gallery_links:
                 links_text = "📁 Current Gallery Files:\n\n" + "\n".join(gallery_links)
@@ -421,21 +372,17 @@ async def handle_regular_url(update: Update, context: ContextTypes.DEFAULT_TYPE,
             os.remove(file_path)
 
 def upload_to_jazzdrive(file_path):
-    """Upload file to JazzDrive"""
     print(f"[DEBUG] upload_to_jazzdrive called for file_path: {file_path}")
     try:
         driver.get("https://cloud.jazzdrive.com.pk/#gallery")
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Gallery')]")))
-        
-        # Try multiple selectors for upload input
         upload_selectors = [
             (By.ID, "uploadInputField"),
             (By.NAME, "file"),
             (By.CSS_SELECTOR, "input[type='file']"),
             (By.XPATH, "//input[@type='file']")
         ]
-        
         upload_input = None
         for selector in upload_selectors:
             try:
@@ -444,25 +391,19 @@ def upload_to_jazzdrive(file_path):
                 break
             except:
                 continue
-        
         if not upload_input:
             raise Exception("Could not find upload input field")
-            
         if not upload_input.is_displayed() or not upload_input.is_enabled():
             driver.execute_script("arguments[0].style.display = 'block';", upload_input)
             time.sleep(1)
-            
         upload_input.send_keys(os.path.abspath(file_path))
-        time.sleep(10)  # Wait longer for upload
-        
-        # Check for success indicators
+        time.sleep(10)
         success_indicators = [
             "upload completed",
             "upload successful",
             "upload finished",
             "100%"
         ]
-        
         for indicator in success_indicators:
             try:
                 WebDriverWait(driver, 10).until(
@@ -471,19 +412,15 @@ def upload_to_jazzdrive(file_path):
                 return True
             except:
                 continue
-                
-        # If no success indicator found, assume success after waiting
         time.sleep(5)
         print(f"[DEBUG] upload_to_jazzdrive (assume success) for {file_path}")
         return True
-        
     except Exception as e:
         logger.error(f"Upload failed: {str(e)}")
         print("[ERROR] upload_to_jazzdrive:", e)
         return False
 
 async def handle_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE, url):
-    """Handle YouTube URLs"""
     print(f"[DEBUG] handle_youtube called for URL: {url}")
     qualities = get_youtube_qualities(url)
     if not qualities:
@@ -499,7 +436,6 @@ async def handle_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE, url
     return YT_QUALITY
 
 async def youtube_quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle YouTube quality selection"""
     query = update.callback_query
     await query.answer()
     label = query.data.replace("yt_", "")
@@ -507,21 +443,16 @@ async def youtube_quality_callback(update: Update, context: ContextTypes.DEFAULT
     qualities = context.user_data['yt_qualities']
     fmt_string = qualities.get(label, 'bestvideo+bestaudio/best')
     msg = await query.edit_message_text(f"⏳ Downloading YouTube video/audio ({label})...")
-    
     try:
         file_path, title = yt_download_and_merge(url, fmt_string)
         if not file_path:
             await msg.edit_text("❌ Could not find a completed media file for upload!")
             return
-            
         await msg.edit_text("📤 Uploading to JazzDrive...")
         upload_success = upload_to_jazzdrive(file_path)
         print(f"[DEBUG] upload_to_jazzdrive returned: {upload_success}")
-        
         if upload_success:
             await msg.edit_text(f"✅ YouTube video/audio uploaded successfully!\n\nTitle: {title}\nQuality: {label}")
-            
-            # Get and send gallery links
             gallery_links = get_gallery_links()
             if gallery_links:
                 links_text = "📁 Current Gallery Files:\n\n" + "\n".join(gallery_links)
@@ -530,12 +461,10 @@ async def youtube_quality_callback(update: Update, context: ContextTypes.DEFAULT
                 await query.message.reply_text("ℹ️ Could not retrieve gallery links")
         else:
             await msg.edit_text(f"❌ Failed to upload video/audio to JazzDrive.\nTitle: {title}")
-            
     except Exception as e:
         print("[EXCEPTION]", repr(e))
         traceback.print_exc()
         await msg.edit_text(f"❌ Error processing YouTube video:\n{str(e)}")
-        
     finally:
         if 'file_path' in locals() and file_path and os.path.exists(file_path):
             try:
@@ -543,16 +472,13 @@ async def youtube_quality_callback(update: Update, context: ContextTypes.DEFAULT
                 print(f"[DEBUG] Temp file {file_path} removed.")
             except Exception as ex:
                 print("[ERROR] Removing file_path in finally block:", ex)
-                
     return ConversationHandler.END
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle errors"""
     error = context.error
     tb_list = traceback.format_exception(type(error), error, error.__traceback__)
     tb_string = ''.join(tb_list)
     logger.error(f"Exception occurred:\n{tb_string}")
-    
     try:
         if update and update.effective_chat:
             await context.bot.send_message(
@@ -563,18 +489,11 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in error handler: {e}")
 
 async def run_bot():
-    """Run the Telegram bot with web server"""
     global driver
-    
-    # Initialize driver
+    # Key fix: reinitialize driver with unique user data dir each launch
     driver = initialize_driver()
-    
     application = Application.builder().token(TOKEN).build()
-    
-    # Command handlers
     application.add_handler(CommandHandler("start", start))
-    
-    # Login conversation handler
     login_handler = ConversationHandler(
         entry_points=[CommandHandler('login', login)],
         states={
@@ -584,79 +503,35 @@ async def run_bot():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
     application.add_handler(login_handler)
-    
-    # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(youtube_quality_callback, pattern="^yt_"))
-    
-    # Error handler
     application.add_error_handler(error_handler)
-    
-    # Start components
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
-    
-    # Run web server and keepalive
     await run_webserver()
     asyncio.create_task(self_ping())
-    
     logger.info("Bot started successfully!")
-    
-    # Keep running
     while True:
         await asyncio.sleep(3600)
 
 async def main():
-    """Main entry point"""
-    global driver
-    
-    max_retries = 3
-    retry_delay = 5
-    
-    for attempt in range(max_retries):
-        try:
-            ensure_cookies()
-            await run_bot()
-            break
-        except Exception as e:
-            logger.error(f"Error (attempt {attempt + 1}/{max_retries}): {str(e)}")
-            if attempt < max_retries - 1:
-                logger.info(f"Retrying in {retry_delay} seconds...")
-                await asyncio.sleep(retry_delay)
-                # Clean up any existing driver
-                if driver is not None:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    driver = None
-            else:
-                logger.error("Max retries exceeded")
-                raise
-    
-    # Cleanup
-    logger.info("Starting cleanup process...")
-    
     try:
-        if site is not None:
+        ensure_cookies()
+        await run_bot()
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+        traceback.print_exc()
+    finally:
+        logger.info("Starting cleanup process...")
+        global runner, site, driver
+        if site:
             await site.stop()
-    except:
-        pass
-    
-    try:
-        if runner is not None:
+        if runner:
             await runner.cleanup()
-    except:
-        pass
-    
-    try:
-        if driver is not None:
+        if driver:
             driver.quit()
-    except:
-        pass
-        
-    logger.info("Cleanup completed")
+        logger.info("Cleanup completed")
 
 if __name__ == "__main__":
     asyncio.run(main())
