@@ -627,7 +627,6 @@ async def main():
                 logger.info(f"Retrying in {retry_delay} seconds...")
                 await asyncio.sleep(retry_delay)
                 # Clean up any existing driver
-                global driver
                 if driver:
                     try:
                         driver.quit()
@@ -641,7 +640,6 @@ async def main():
     # Cleanup
     logger.info("Starting cleanup process...")
     
-    global runner, site, driver
     try:
         if site:
             await site.stop()
