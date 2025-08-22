@@ -53,19 +53,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver"""
+    """Initialize Chrome WebDriver with webdriver-manager"""
+    from webdriver_manager.chrome import ChromeDriverManager
+    from selenium.webdriver.chrome.service import Service
+    
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--remote-debugging-port=9222")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-software-rasterizer")
-    chrome_options.add_argument("--disable-setuid-sandbox")
     
-    return webdriver.Chrome(options=chrome_options)
+    # Add unique user data directory
+    user_data_dir = f"/tmp/chrome_user_data_{int(time.time())}"
+    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+    
+    # Additional stability options
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--no-default-browser-check")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    
+    # Use webdriver-manager to handle ChromeDriver
+    service = Service(ChromeDriverManager().install())
+    
+    return webdriver.Chrome(service=service, options=chrome_options)
 
 def download_file(url, save_path=None):
     """Download file with proper filename handling"""
@@ -601,12 +613,34 @@ async def run_bot():
 
 async def main():
     """Main entry point"""
-    try:
-        ensure_cookies()
-        await run_bot()
-    except Exception as e:
-        logger.error(f"Fatal error: {str(e)}")
-        traceback.print_exc()
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            ensure_cookies()
+            await run_bot()
+            break
+        except SessionNotCreatedException as e:
+            logger.error(f"Session creation failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                # Clean up any existing driver
+                global driver
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    driver = None
+            else:
+                logger.error("Max retries exceeded for session creation")
+                raise
+        except Exception as e:
+            logger.error(f"Fatal error: {str(e)}")
+            traceback.print_exc()
+            break
     finally:
         logger.info("Starting cleanup process...")
         
@@ -616,7 +650,10 @@ async def main():
         if runner:
             await runner.cleanup()
         if driver:
-            driver.quit()
+            try:
+                driver.quit()
+            except:
+                pass
             
         logger.info("Cleanup completed")
 
