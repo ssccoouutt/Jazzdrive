@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 def initialize_driver():
     """Initialize Chrome WebDriver with unique user data directory"""
-    global driver  # Declare driver as global here
+    global driver
     
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
@@ -304,11 +304,12 @@ async def self_ping():
 
 async def run_webserver():
     """Run the web server for health checks"""
+    global runner, site
+    
     app = web.Application()
     app.router.add_get(HEALTH_CHECK_ENDPOINT, health_check)
     app.router.add_get("/", root_handler)
     
-    global runner, site
     runner = web.AppRunner(app)
     await runner.setup()
     
