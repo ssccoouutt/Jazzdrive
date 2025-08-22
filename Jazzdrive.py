@@ -23,6 +23,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, SessionNotCreatedException
 import yt_dlp
 import time
+import uuid
 
 # Configuration
 TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8"
@@ -63,7 +64,7 @@ def initialize_driver():
     chrome_options.add_argument("--disable-gpu")
     
     # Add unique user data directory to prevent conflicts
-    user_data_dir = f"/tmp/chrome_user_data_{int(time.time())}"
+    user_data_dir = f"/tmp/chrome_user_data_{uuid.uuid4().hex}"
     chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
     
     # Additional options for stability
@@ -137,7 +138,7 @@ def get_youtube_qualities(url):
     ensure_cookies()
     ydl_opts = {
         'quiet': True,
-        'no_warnings': True,
+        'no-warnings': True,
         'extract_flat': False,
         'cookiefile': COOKIES_FILE if os.path.exists(COOKIES_FILE) else None
     }
@@ -389,7 +390,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages"""
     url = update.message.text.strip()
     print(f"[DEBUG] Received message URL: {url}")
-    if not hasattr(driver, 'current_url'):
+    if driver is None or not hasattr(driver, 'current_url'):
         await update.message.reply_text("Please login first with /login")
         return
     if 'youtube.com' in url or 'youtu.be' in url:
@@ -613,6 +614,8 @@ async def run_bot():
 
 async def main():
     """Main entry point"""
+    global driver
+    
     max_retries = 3
     retry_delay = 5
     
@@ -627,7 +630,7 @@ async def main():
                 logger.info(f"Retrying in {retry_delay} seconds...")
                 await asyncio.sleep(retry_delay)
                 # Clean up any existing driver
-                if driver:
+                if driver is not None:
                     try:
                         driver.quit()
                     except:
@@ -641,19 +644,19 @@ async def main():
     logger.info("Starting cleanup process...")
     
     try:
-        if site:
+        if site is not None:
             await site.stop()
     except:
         pass
     
     try:
-        if runner:
+        if runner is not None:
             await runner.cleanup()
     except:
         pass
     
     try:
-        if driver:
+        if driver is not None:
             driver.quit()
     except:
         pass
