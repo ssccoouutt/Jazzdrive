@@ -1,4 +1,3 @@
-
 import re
 import os
 import logging
@@ -21,7 +20,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, SessionNotCreatedException
 import yt_dlp
 import time
 
@@ -53,10 +52,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver with webdriver-manager"""
-    from webdriver_manager.chrome import ChromeDriverManager
-    from selenium.webdriver.chrome.service import Service
-    
+    """Initialize Chrome WebDriver with unique user data directory"""
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -64,20 +60,20 @@ def initialize_driver():
     chrome_options.add_argument("--window-size=1920,1080")
     chrome_options.add_argument("--disable-gpu")
     
-    # Add unique user data directory
+    # Add unique user data directory to prevent conflicts
     user_data_dir = f"/tmp/chrome_user_data_{int(time.time())}"
     chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
     
-    # Additional stability options
+    # Additional options for stability
     chrome_options.add_argument("--no-first-run")
     chrome_options.add_argument("--no-default-browser-check")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-dev-shm-usage")
     
-    # Use webdriver-manager to handle ChromeDriver
-    service = Service(ChromeDriverManager().install())
+    # Set binary location
+    chrome_options.binary_location = os.environ.get('GOOGLE_CHROME_BIN', '/usr/bin/google-chrome')
     
-    return webdriver.Chrome(service=service, options=chrome_options)
+    return webdriver.Chrome(options=chrome_options)
 
 def download_file(url, save_path=None):
     """Download file with proper filename handling"""
@@ -638,7 +634,7 @@ async def main():
                 logger.error("Max retries exceeded")
                 raise
     
-    # Cleanup outside the try-except block
+    # Cleanup
     logger.info("Starting cleanup process...")
     
     global runner, site, driver
@@ -661,5 +657,6 @@ async def main():
         pass
         
     logger.info("Cleanup completed")
+
 if __name__ == "__main__":
     asyncio.run(main())
