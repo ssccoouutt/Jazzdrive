@@ -9,7 +9,9 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException, TimeoutException
 import tempfile
+import time
 
 # Configuration
 TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8"
@@ -33,23 +35,35 @@ logger = logging.getLogger(__name__)
 
 def initialize_driver():
     """Initialize Chrome WebDriver"""
-    chrome_options = Options()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-gpu")
-    
-    # Add unique user data directory
-    user_data_dir = f"/tmp/chrome_user_data_{int(datetime.now().timestamp())}"
-    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
-    
-    # Additional options for stability
-    chrome_options.add_argument("--no-first-run")
-    chrome_options.add_argument("--no-default-browser-check")
-    chrome_options.add_argument("--disable-extensions")
-    
-    return webdriver.Chrome(options=chrome_options)
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--disable-gpu")
+        
+        # Add unique user data directory
+        user_data_dir = f"/tmp/chrome_user_data_{int(time.time())}"
+        chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+        
+        # Additional options for stability
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--no-default-browser-check")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        
+        # Set longer timeouts
+        chrome_options.add_argument("--timeout=30000")
+        
+        logger.info("Initializing Chrome WebDriver...")
+        driver = webdriver.Chrome(options=chrome_options)
+        logger.info("WebDriver initialized successfully!")
+        return driver
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize WebDriver: {str(e)}")
+        raise
 
 async def health_check(request):
     """Health check endpoint for Koyeb"""
@@ -115,6 +129,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Initialize driver if not already done
         if driver is None:
+            await message.edit_text("🚀 Initializing WebDriver...")
             driver = initialize_driver()
             await message.edit_text("✅ WebDriver initialized successfully!")
             await asyncio.sleep(1)
@@ -123,9 +138,12 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.edit_text("🌐 Opening Google.com...")
         driver.get("https://www.google.com")
         
+        # Wait for page to load
+        await asyncio.sleep(2)
+        
         # Take screenshot
         await message.edit_text("📸 Taking screenshot...")
-        screenshot_path = os.path.join(tempfile.gettempdir(), "google_screenshot.png")
+        screenshot_path = os.path.join(tempfile.gettempdir(), f"google_screenshot_{int(time.time())}.png")
         driver.save_screenshot(screenshot_path)
         
         # Send screenshot to user
@@ -141,8 +159,21 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(screenshot_path)
         await message.edit_text("✅ Test completed successfully!")
         
+    except WebDriverException as e:
+        error_msg = f"❌ WebDriver Error: {str(e)}"
+        logger.error(error_msg)
+        await message.edit_text(error_msg)
+        # Reset driver on error
+        global driver
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+            driver = None
+        
     except Exception as e:
-        error_msg = f"❌ Error during test: {str(e)}"
+        error_msg = f"❌ Unexpected Error: {str(e)}"
         logger.error(error_msg)
         await message.edit_text(error_msg)
 
