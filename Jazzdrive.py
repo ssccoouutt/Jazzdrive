@@ -12,12 +12,10 @@ from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.common.exceptions import WebDriverException
 
-# --- Configuration ---
-# It's best practice to use environment variables for sensitive data
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_FALLBACK_TOKEN")
-PORT = int(os.environ.get("PORT", 8080))
-# This should be your Koyeb app URL, e.g., "https://my-bot-app-my-org.koyeb.app"
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+# --- Configuration (Hardcoded as per user's request) ---
+TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8" # Hardcoded Telegram Bot Token
+PORT = 8000 # Hardcoded Port
+WEBHOOK_URL = "https://jazzdrive-bot-your-org.koyeb.app" # Example: Replace with your actual Koyeb app URL
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -139,13 +137,6 @@ async def telegram_webhook(request: web.Request) -> web.Response:
 
 async def main():
     """Main function to set up and run the bot and web server."""
-    if not WEBHOOK_URL:
-        logger.error("FATAL: WEBHOOK_URL environment variable not set!")
-        return
-    if "YOUR_FALLBACK_TOKEN" in TOKEN:
-        logger.error("FATAL: TELEGRAM_BOT_TOKEN not set correctly!")
-        return
-
     # Initialize the Telegram bot application
     bot = Bot(token=TOKEN)
     application = Application.builder().bot(bot).build()
@@ -183,4 +174,3 @@ if __name__ == "__main__":
         logger.info("Shutdown signal received.")
     except Exception as e:
         logger.critical(f"Application failed to run: {e}", exc_info=True)
-
