@@ -8,6 +8,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import WebDriverException
 import tempfile
 import time
@@ -33,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver"""
+    """Initialize Chrome WebDriver using webdriver-manager"""
     global driver
     try:
         chrome_options = Options()
@@ -43,18 +45,17 @@ def initialize_driver():
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-gpu")
         
-        # Add unique user data directory
-        user_data_dir = f"/tmp/chrome_user_data_{int(time.time())}"
-        chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
-        
         # Additional options for stability
         chrome_options.add_argument("--no-first-run")
         chrome_options.add_argument("--no-default-browser-check")
         chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-dev-shm-usage")
         
-        logger.info("Initializing Chrome WebDriver...")
-        driver = webdriver.Chrome(options=chrome_options)
+        logger.info("Initializing Chrome WebDriver with webdriver-manager...")
+        
+        # Use webdriver-manager to automatically handle ChromeDriver
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
         logger.info("WebDriver initialized successfully!")
         return driver
         
