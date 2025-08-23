@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.common.exceptions import WebDriverException
 import tempfile
 import time
@@ -35,47 +36,52 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver with stability options"""
+    """Initialize WebDriver with multiple fallback approaches"""
     global driver
     try:
-        chrome_options = Options()
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-gpu")
+        # Approach 1: Try Chrome with minimal options
+        try:
+            chrome_options = Options()
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--single-process")  # Critical for containers
+            
+            service = Service(executable_path="/usr/local/bin/chromedriver")
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("WebDriver initialized successfully with Chrome!")
+            return driver
+        except Exception as e:
+            logger.warning(f"Chrome approach failed: {str(e)}")
         
-        # Critical options to prevent crashes
-        chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-setuid-sandbox")
-        chrome_options.add_argument("--disable-background-timer-throttling")
-        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-        chrome_options.add_argument("--disable-renderer-backgrounding")
+        # Approach 2: Try Chrome with remote debugging (if available)
+        try:
+            chrome_options = Options()
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--headless=new")
+            chrome_options.add_argument("--remote-debugging-port=9222")
+            chrome_options.add_argument("--single-process")
+            
+            service = Service(executable_path="/usr/local/bin/chromedriver")
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("WebDriver initialized successfully with remote debugging!")
+            return driver
+        except Exception as e:
+            logger.warning(f"Chrome remote debugging failed: {str(e)}")
         
-        # Memory and performance options
-        chrome_options.add_argument("--disable-accelerated-2d-canvas")
-        chrome_options.add_argument("--disable-image-animation-resync")
+        # Approach 3: Try Firefox if available
+        try:
+            firefox_options = FirefoxOptions()
+            firefox_options.add_argument("--headless")
+            driver = webdriver.Firefox(options=firefox_options)
+            logger.info("WebDriver initialized successfully with Firefox!")
+            return driver
+        except Exception as e:
+            logger.warning(f"Firefox approach failed: {str(e)}")
         
-        # Additional options for stability
-        chrome_options.add_argument("--no-first-run")
-        chrome_options.add_argument("--no-default-browser-check")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-plugins")
-        chrome_options.add_argument("--disable-popup-blocking")
-        chrome_options.add_argument("--ignore-certificate-errors")
-        
-        logger.info("Initializing Chrome WebDriver...")
-        
-        # Use the detected ChromeDriver
-        service = Service(executable_path="/usr/local/bin/chromedriver")
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        # Set timeouts
-        driver.set_page_load_timeout(30)
-        driver.implicitly_wait(10)
-        
-        logger.info("WebDriver initialized successfully!")
-        return driver
+        raise Exception("All WebDriver initialization attempts failed")
         
     except Exception as e:
         logger.error(f"Failed to initialize WebDriver: {str(e)}")
@@ -135,7 +141,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🚀 Basic WebDriver Bot\n\n"
         "Send /test to test the WebDriver functionality\n"
         "Send /debug to check system status\n"
-        "Send /testchrome to test Chrome installation"
+        "Send /testchrome to test Chrome installation\n"
+        "Send /simpletest for basic connection test"
     )
 
 async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,6 +183,19 @@ async def test_chrome_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.message.reply_text(f"❌ Chrome test error: {str(e)}")
 
+async def simple_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Simple test without WebDriver - just check connectivity"""
+    try:
+        # Test basic HTTP connectivity
+        import requests
+        response = requests.get('https://www.google.com', timeout=10)
+        if response.status_code == 200:
+            await update.message.reply_text("✅ Network connectivity test passed!")
+        else:
+            await update.message.reply_text(f"❌ Network test failed: Status {response.status_code}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Network test error: {str(e)}")
+
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Test WebDriver functionality"""
     global driver
@@ -189,7 +209,18 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await message.edit_text("✅ WebDriver initialized successfully!")
             await asyncio.sleep(1)
         
-        # Open Google.com
+        # Open a simple page first to test
+        await message.edit_text("🌐 Testing with simple page...")
+        driver.get("https://httpbin.org/html")  # Simple static page
+        
+        # Wait for page to load
+        await asyncio.sleep(2)
+        
+        # Get page title to verify it worked
+        title = driver.title
+        await message.edit_text(f"📄 Page title: {title}")
+        
+        # Try Google.com if simple page worked
         await message.edit_text("🌐 Opening Google.com...")
         driver.get("https://www.google.com")
         
@@ -207,7 +238,7 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=photo,
-                caption="✅ Screenshot of Google.com taken successfully!"
+                caption=f"✅ Screenshot of {driver.title} taken successfully!"
             )
         
         # Clean up
@@ -254,6 +285,7 @@ async def run_bot():
     application.add_handler(CommandHandler("test", test_command))
     application.add_handler(CommandHandler("debug", debug_command))
     application.add_handler(CommandHandler("testchrome", test_chrome_command))
+    application.add_handler(CommandHandler("simpletest", simple_test_command))
     
     # Error handler
     application.add_error_handler(error_handler)
