@@ -9,10 +9,10 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import WebDriverException
 import tempfile
 import time
+import subprocess
 
 # Configuration
 TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8"
@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver using webdriver-manager"""
+    """Initialize Chrome WebDriver"""
     global driver
     try:
         chrome_options = Options()
@@ -50,11 +50,28 @@ def initialize_driver():
         chrome_options.add_argument("--no-default-browser-check")
         chrome_options.add_argument("--disable-extensions")
         
-        logger.info("Initializing Chrome WebDriver with webdriver-manager...")
+        logger.info("Initializing Chrome WebDriver...")
         
-        # Use webdriver-manager to automatically handle ChromeDriver
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Try to find ChromeDriver in common locations
+        chromedriver_paths = [
+            '/usr/bin/chromedriver',
+            '/usr/local/bin/chromedriver',
+            '/app/.chromedriver/bin/chromedriver'
+        ]
+        
+        chromedriver_path = None
+        for path in chromedriver_paths:
+            if os.path.exists(path):
+                chromedriver_path = path
+                break
+        
+        if chromedriver_path:
+            logger.info(f"Using ChromeDriver at: {chromedriver_path}")
+            service = Service(executable_path=chromedriver_path)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        else:
+            logger.info("Using system ChromeDriver (auto-detection)")
+            driver = webdriver.Chrome(options=chrome_options)
         
         logger.info("WebDriver initialized successfully!")
         return driver
@@ -115,8 +132,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
     await update.message.reply_text(
         "🚀 Basic WebDriver Bot\n\n"
-        "Send /test to test the WebDriver functionality"
+        "Send /test to test the WebDriver functionality\n"
+        "Send /debug to check system status"
     )
+
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command to check system status"""
+    try:
+        # Check system information
+        arch = subprocess.run(['uname', '-m'], capture_output=True, text=True)
+        chrome_check = subprocess.run(['which', 'google-chrome'], capture_output=True, text=True)
+        chromium_check = subprocess.run(['which', 'chromium-browser'], capture_output=True, text=True)
+        chromedriver_check = subprocess.run(['which', 'chromedriver'], capture_output=True, text=True)
+        
+        message = f"""
+🔍 System Debug Info:
+Architecture: {arch.stdout.strip()}
+Chrome: {chrome_check.stdout.strip() or 'Not found'}
+Chromium: {chromium_check.stdout.strip() or 'Not found'}
+ChromeDriver: {chromedriver_check.stdout.strip() or 'Not found'}
+Python: {os.sys.version}
+        """
+        
+        await update.message.reply_text(message)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Debug error: {str(e)}")
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Test WebDriver functionality"""
@@ -194,6 +235,7 @@ async def run_bot():
     # Command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("test", test_command))
+    application.add_handler(CommandHandler("debug", debug_command))
     
     # Error handler
     application.add_error_handler(error_handler)
