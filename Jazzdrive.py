@@ -1,176 +1,367 @@
 import os
 import logging
 import asyncio
-import tempfile
-import subprocess
+import aiohttp
 from datetime import datetime
 from aiohttp import web
-from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, CallbackContext, TypeHandler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import WebDriverException
+import tempfile
+import time
+import subprocess
 
-# --- Configuration (Hardcoded as per user's request) ---
-TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8" # Hardcoded Telegram Bot Token
-PORT = 8000 # Hardcoded Port
-WEBHOOK_URL = "https://jazzdrive-bot-your-org.koyeb.app" # Example: Replace with your actual Koyeb app URL
+# Configuration
+TOKEN = "8112251652:AAHQ7msdI8zTC6DjzdkPhwmclZmreN_taj8"
 
-# --- Logging Setup ---
+# Web Server Configuration
+WEB_PORT = 8000
+PING_INTERVAL = 25
+HEALTH_CHECK_ENDPOINT = "/health"
+
+# Global variables
+driver = None
+runner = None
+site = None
+
+# Initialize logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# --- WebDriver Management ---
 def initialize_driver():
-    """
-    Initializes a new Selenium WebDriver instance for Chrome.
-    This function should be called only when needed to avoid stale sessions.
-    """
-    logger.info("Initializing new WebDriver instance...")
-    chrome_options = ChromeOptions()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--single-process") # Important for containerized environments
-
-    # Path to chromedriver is usually /usr/local/bin/chromedriver in this Docker setup
-    service = ChromeService(executable_path="/usr/local/bin/chromedriver")
-    
+    """Initialize Chrome WebDriver with maximum stability options"""
+    global driver
     try:
+        chrome_options = Options()
+        
+        # Essential options for container stability
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--disable-gpu")
+        
+        # Critical stability options
+        chrome_options.add_argument("--single-process")
+        chrome_options.add_argument("--no-zygote")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--disable-background-timer-throttling")
+        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+        chrome_options.add_argument("--disable-renderer-backgrounding")
+        
+        # Memory and resource management
+        chrome_options.add_argument("--disable-accelerated-2d-canvas")
+        chrome_options.add_argument("--disable-image-animation-resync")
+        chrome_options.add_argument("--memory-pressure-off")
+        chrome_options.add_argument("--max-old-space-size=4096")
+        
+        # Security and features
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--no-default-browser-check")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-plugins")
+        chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--ignore-certificate-errors")
+        chrome_options.add_argument("--allow-running-insecure-content")
+        chrome_options.add_argument("--disable-web-security")
+        
+        # Remote debugging
+        chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--remote-debugging-address=0.0.0.0")
+        
+        # Disable various features that can cause crashes
+        chrome_options.add_argument("--disable-features=VizDisplayCompositor,TranslateUI,BlinkGenPropertyTrees")
+        chrome_options.add_argument("--disable-component-extensions-with-background-pages")
+        chrome_options.add_argument("--disable-background-networking")
+        chrome_options.add_argument("--disable-sync")
+        chrome_options.add_argument("--metrics-recording-only")
+        chrome_options.add_argument("--no-pings")
+        chrome_options.add_argument("--safebrowsing-disable-auto-update")
+        chrome_options.add_argument("--password-store=basic")
+        chrome_options.add_argument("--autoplay-policy=no-user-gesture-required")
+        
+        # Experimental options
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        logger.info("Initializing Chrome WebDriver with maximum stability options...")
+        
+        service = Service(
+            executable_path="/usr/local/bin/chromedriver",
+            service_args=['--verbose']  # Enable verbose logging for debugging
+        )
+        
         driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+        # Set minimal timeouts
+        driver.set_page_load_timeout(20)
+        driver.implicitly_wait(5)
+        driver.set_script_timeout(10)
+        
         logger.info("WebDriver initialized successfully!")
         return driver
-    except WebDriverException as e:
-        logger.error(f"Failed to initialize WebDriver: {e}")
-        # Log detailed stacktrace for debugging
-        logger.exception("WebDriver initialization stacktrace:")
-        raise  # Re-raise the exception to be caught by the command handler
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize WebDriver: {str(e)}")
+        raise
 
-# --- Telegram Command Handlers ---
-async def start_command(update: Update, context: CallbackContext):
-    """Handler for the /start command."""
-    await update.message.reply_text(
-        "🚀 WebDriver Bot is ready!\n\n"
-        "Send /test to run a Selenium test.\n"
-        "Send /debug to check system and environment info."
+async def health_check(request):
+    """Health check endpoint for Koyeb"""
+    return web.Response(
+        text=f"🤖 Basic Bot is operational | Last active: {datetime.now()}",
+        headers={"Content-Type": "text/plain"},
+        status=200
     )
 
-async def debug_command(update: Update, context: CallbackContext):
-    """Handler for the /debug command to check system status."""
-    try:
-        chrome_path = subprocess.getoutput('which google-chrome-stable')
-        chromedriver_path = subprocess.getoutput('which chromedriver')
-        chrome_version = subprocess.getoutput('google-chrome-stable --version')
+async def root_handler(request):
+    """Root endpoint handler"""
+    return web.Response(
+        text="Basic Bot is running",
+        status=200
+    )
+
+async def self_ping():
+    """Keep-alive mechanism for Koyeb"""
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{WEB_PORT}{HEALTH_CHECK_ENDPOINT}') as resp:
+                    if resp.status == 200:
+                        logger.info("Keepalive ping successful")
+                    else:
+                        logger.warning(f"Keepalive ping status: {resp.status}")
+                    
+            with open('/tmp/last_active.txt', 'w') as f:
+                f.write(str(datetime.now()))
+                
+        except Exception as e:
+            logger.error(f"Keepalive error: {str(e)}")
         
-        debug_info = (
-            f"🤖 **System & Bot Debug Info**\n\n"
-            f"**Webhook URL:** `{WEBHOOK_URL}`\n"
-            f"**Listening Port:** `{PORT}`\n\n"
-            f"**Chrome Path:** `{chrome_path}`\n"
-            f"**ChromeDriver Path:** `{chromedriver_path}`\n"
-            f"**Chrome Version:** `{chrome_version}`\n\n"
-            f"**Python Version:** `{os.sys.version}`"
-        )
-        await update.message.reply_text(debug_info, parse_mode='Markdown')
+        await asyncio.sleep(PING_INTERVAL)
+
+async def run_webserver():
+    """Run the web server for health checks"""
+    app = web.Application()
+    app.router.add_get(HEALTH_CHECK_ENDPOINT, health_check)
+    app.router.add_get("/", root_handler)
+    
+    global runner, site
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    site = web.TCPSite(runner, '0.0.0.0', WEB_PORT)
+    await site.start()
+    logger.info(f"Health check server running on port {WEB_PORT}")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start command handler"""
+    await update.message.reply_text(
+        "🚀 Basic WebDriver Bot\n\n"
+        "Send /test to test the WebDriver functionality\n"
+        "Send /debug to check system status\n"
+        "Send /testchrome to test Chrome installation\n"
+        "Send /simpletest for basic connection test"
+    )
+
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command to check system status"""
+    try:
+        # Check system information
+        arch = subprocess.run(['uname', '-m'], capture_output=True, text=True)
+        chrome_check = subprocess.run(['which', 'google-chrome'], capture_output=True, text=True)
+        chromedriver_check = subprocess.run(['which', 'chromedriver'], capture_output=True, text=True)
+        
+        # Check Chrome version
+        chrome_version = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        
+        # Check memory
+        memory_info = subprocess.run(['free', '-h'], capture_output=True, text=True)
+        
+        message = f"""
+🔍 System Debug Info:
+Architecture: {arch.stdout.strip()}
+Chrome: {chrome_check.stdout.strip() or 'Not found'}
+Chrome Version: {chrome_version.stdout.strip() if chrome_version.returncode == 0 else 'Unknown'}
+ChromeDriver: {chromedriver_check.stdout.strip() or 'Not found'}
+Memory:
+{memory_info.stdout if memory_info.returncode == 0 else 'Unable to get memory info'}
+Python: {os.sys.version}
+        """
+        
+        await update.message.reply_text(message)
+        
     except Exception as e:
-        logger.error(f"Debug command failed: {e}")
-        await update.message.reply_text(f"❌ Error during debug check: {e}")
+        await update.message.reply_text(f"❌ Debug error: {str(e)}")
 
-async def test_command(update: Update, context: CallbackContext):
-    """
-    Handler for the /test command. Initializes WebDriver, runs a test, and quits.
-    """
-    message = await update.message.reply_text("⏳ Test started. Initializing WebDriver...")
-    driver = None  # Ensure driver is defined in this scope
+async def test_chrome_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test if Chrome works by checking version"""
     try:
-        driver = initialize_driver()
-        await message.edit_text("🌐 WebDriver initialized. Opening Google.com...")
-        
-        driver.get("https://www.google.com")
-        await asyncio.sleep(2)  # Allow time for the page to render
+        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            await update.message.reply_text(f"✅ Chrome is working: {result.stdout.strip()}")
+        else:
+            await update.message.reply_text(f"❌ Chrome failed: {result.stderr}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Chrome test error: {str(e)}")
 
-        await message.edit_text(f"📸 Page '{driver.title}' loaded. Taking screenshot...")
-        
-        # Use a temporary file for the screenshot
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
-            screenshot_path = tmp_file.name
-            driver.save_screenshot(screenshot_path)
+async def simple_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Simple test without WebDriver - just check connectivity"""
+    try:
+        # Test basic HTTP connectivity
+        import requests
+        response = requests.get('https://httpbin.org/get', timeout=10)
+        if response.status_code == 200:
+            await update.message.reply_text("✅ Network connectivity test passed!")
+        else:
+            await update.message.reply_text(f"❌ Network test failed: Status {response.status_code}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Network test error: {str(e)}")
 
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test WebDriver functionality with simple page first"""
+    global driver
+    message = await update.message.reply_text("⏳ Testing WebDriver...")
+    
+    try:
+        # Initialize driver if not already done
+        if driver is None:
+            await message.edit_text("🚀 Initializing WebDriver...")
+            driver = initialize_driver()
+            await message.edit_text("✅ WebDriver initialized successfully!")
+            await asyncio.sleep(1)
+        
+        # Test with a very simple page first
+        await message.edit_text("🌐 Testing with simple page...")
+        driver.get("data:text/html,<h1>Hello World!</h1>")
+        
+        # Wait and check if page loaded
+        await asyncio.sleep(1)
+        title = driver.title
+        await message.edit_text(f"📄 Simple page title: {title}")
+        
+        # If simple page worked, try a basic external page
+        await message.edit_text("🌐 Testing with httpbin...")
+        driver.get("https://httpbin.org/html")
+        
+        # Wait for page to load
+        await asyncio.sleep(2)
+        title = driver.title
+        await message.edit_text(f"📄 HTTPBin page title: {title}")
+        
+        # Take screenshot
+        await message.edit_text("📸 Taking screenshot...")
+        screenshot_path = os.path.join(tempfile.gettempdir(), f"test_screenshot_{int(time.time())}.png")
+        driver.save_screenshot(screenshot_path)
+        
+        # Send screenshot to user
         await message.edit_text("📤 Sending screenshot...")
+        with open(screenshot_path, 'rb') as photo:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=photo,
+                caption=f"✅ Screenshot of {title} taken successfully!"
+            )
         
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=open(screenshot_path, 'rb'),
-            caption=f"✅ Test successful! Screenshot of '{driver.title}'."
-        )
-        
-        # Clean up the sent message and file
-        await message.delete()
+        # Clean up
         os.remove(screenshot_path)
-
-    except Exception as e:
-        error_message = f"❌ An error occurred during the test: {e}"
-        logger.error(error_message, exc_info=True)
-        await message.edit_text(error_message)
-    finally:
+        await message.edit_text("✅ Test completed successfully!")
+        
+    except WebDriverException as e:
+        error_msg = f"❌ WebDriver Error: {str(e)}"
+        logger.error(error_msg)
+        await message.edit_text(error_msg)
+        # Reset driver on error
         if driver:
-            logger.info("Quitting WebDriver instance.")
-            driver.quit()
+            try:
+                driver.quit()
+            except:
+                pass
+            driver = None
+        
+    except Exception as e:
+        error_msg = f"❌ Unexpected Error: {str(e)}"
+        logger.error(error_msg)
+        await message.edit_text(error_msg)
 
-# --- Web Server for Webhook and Health Checks ---
-async def health_check(request: web.Request) -> web.Response:
-    """AIOHTTP handler for Koyeb's health checks."""
-    return web.Response(text="OK", status=200)
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle errors"""
+    error = context.error
+    logger.error(f"Exception occurred: {error}")
+    
+    try:
+        if update and update.effective_chat:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ An error occurred. Please try again."
+            )
+    except Exception as e:
+        logger.error(f"Error in error handler: {e}")
 
-async def telegram_webhook(request: web.Request) -> web.Response:
-    """AIOHTTP handler for receiving updates from Telegram."""
-    application = request.app['bot_app']
-    update = Update.de_json(await request.json(), application.bot)
-    await application.process_update(update)
-    return web.Response(status=200)
-
-async def main():
-    """Main function to set up and run the bot and web server."""
-    # Initialize the Telegram bot application
-    bot = Bot(token=TOKEN)
-    application = Application.builder().bot(bot).build()
-
-    # Add command handlers
-    application.add_handler(CommandHandler("start", start_command))
+async def run_bot():
+    """Run the Telegram bot with web server"""
+    application = Application.builder().token(TOKEN).build()
+    
+    # Command handlers
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("test", test_command))
     application.add_handler(CommandHandler("debug", debug_command))
-
-    # Set up the webhook
-    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/telegram")
-    logger.info(f"Webhook set to {WEBHOOK_URL}/telegram")
-
-    # Set up the AIOHTTP web server
-    webapp = web.Application()
-    webapp['bot_app'] = application
-    webapp.router.add_post("/telegram", telegram_webhook)
-    webapp.router.add_get("/health", health_check) # For Koyeb health checks
-
-    # Run the web server
-    runner = web.AppRunner(webapp)
-    await runner.setup()
-    site = web.TCPSite(runner, host='0.0.0.0', port=PORT)
+    application.add_handler(CommandHandler("testchrome", test_chrome_command))
+    application.add_handler(CommandHandler("simpletest", simple_test_command))
     
-    logger.info(f"Starting web server on port {PORT}...")
-    await site.start()
+    # Error handler
+    application.add_error_handler(error_handler)
+    
+    # Start components
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    # Run web server and keepalive
+    await run_webserver()
+    asyncio.create_task(self_ping())
+    
+    logger.info("Bot started successfully!")
+    
+    # Keep running
+    while True:
+        await asyncio.sleep(3600)
 
-    # Keep the application running
-    await asyncio.Event().wait()
+async def main():
+    """Main entry point"""
+    try:
+        await run_bot()
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+    finally:
+        logger.info("Starting cleanup process...")
+        
+        global runner, site, driver
+        try:
+            if site:
+                await site.stop()
+        except:
+            pass
+        
+        try:
+            if runner:
+                await runner.cleanup()
+        except:
+            pass
+        
+        try:
+            if driver:
+                driver.quit()
+        except:
+            pass
+            
+        logger.info("Cleanup completed")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Shutdown signal received.")
-    except Exception as e:
-        logger.critical(f"Application failed to run: {e}", exc_info=True)
+    asyncio.run(main())
