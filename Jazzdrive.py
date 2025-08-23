@@ -8,8 +8,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import WebDriverException, TimeoutException
+from selenium.common.exceptions import WebDriverException
 import tempfile
 import time
 
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 def initialize_driver():
     """Initialize Chrome WebDriver"""
+    global driver
     try:
         chrome_options = Options()
         chrome_options.add_argument("--no-sandbox")
@@ -52,9 +52,6 @@ def initialize_driver():
         chrome_options.add_argument("--no-default-browser-check")
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-dev-shm-usage")
-        
-        # Set longer timeouts
-        chrome_options.add_argument("--timeout=30000")
         
         logger.info("Initializing Chrome WebDriver...")
         driver = webdriver.Chrome(options=chrome_options)
@@ -122,11 +119,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Test WebDriver functionality"""
+    global driver
     message = await update.message.reply_text("⏳ Testing WebDriver...")
     
     try:
-        global driver
-        
         # Initialize driver if not already done
         if driver is None:
             await message.edit_text("🚀 Initializing WebDriver...")
@@ -164,7 +160,6 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(error_msg)
         await message.edit_text(error_msg)
         # Reset driver on error
-        global driver
         if driver:
             try:
                 driver.quit()
