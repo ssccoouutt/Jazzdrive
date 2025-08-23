@@ -35,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def initialize_driver():
-    """Initialize Chrome WebDriver"""
+    """Initialize Chrome WebDriver with stability options"""
     global driver
     try:
         chrome_options = Options()
@@ -45,33 +45,34 @@ def initialize_driver():
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-gpu")
         
+        # Critical options to prevent crashes
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--disable-background-timer-throttling")
+        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+        chrome_options.add_argument("--disable-renderer-backgrounding")
+        
+        # Memory and performance options
+        chrome_options.add_argument("--disable-accelerated-2d-canvas")
+        chrome_options.add_argument("--disable-image-animation-resync")
+        
         # Additional options for stability
         chrome_options.add_argument("--no-first-run")
         chrome_options.add_argument("--no-default-browser-check")
         chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-plugins")
+        chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--ignore-certificate-errors")
         
         logger.info("Initializing Chrome WebDriver...")
         
-        # Try to find ChromeDriver in common locations
-        chromedriver_paths = [
-            '/usr/bin/chromedriver',
-            '/usr/local/bin/chromedriver',
-            '/app/.chromedriver/bin/chromedriver'
-        ]
+        # Use the detected ChromeDriver
+        service = Service(executable_path="/usr/local/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=chrome_options)
         
-        chromedriver_path = None
-        for path in chromedriver_paths:
-            if os.path.exists(path):
-                chromedriver_path = path
-                break
-        
-        if chromedriver_path:
-            logger.info(f"Using ChromeDriver at: {chromedriver_path}")
-            service = Service(executable_path=chromedriver_path)
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-        else:
-            logger.info("Using system ChromeDriver (auto-detection)")
-            driver = webdriver.Chrome(options=chrome_options)
+        # Set timeouts
+        driver.set_page_load_timeout(30)
+        driver.implicitly_wait(10)
         
         logger.info("WebDriver initialized successfully!")
         return driver
@@ -133,7 +134,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 Basic WebDriver Bot\n\n"
         "Send /test to test the WebDriver functionality\n"
-        "Send /debug to check system status"
+        "Send /debug to check system status\n"
+        "Send /testchrome to test Chrome installation"
     )
 
 async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,10 +147,14 @@ async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chromium_check = subprocess.run(['which', 'chromium-browser'], capture_output=True, text=True)
         chromedriver_check = subprocess.run(['which', 'chromedriver'], capture_output=True, text=True)
         
+        # Check Chrome version
+        chrome_version = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        
         message = f"""
 🔍 System Debug Info:
 Architecture: {arch.stdout.strip()}
 Chrome: {chrome_check.stdout.strip() or 'Not found'}
+Chrome Version: {chrome_version.stdout.strip() if chrome_version.returncode == 0 else 'Unknown'}
 Chromium: {chromium_check.stdout.strip() or 'Not found'}
 ChromeDriver: {chromedriver_check.stdout.strip() or 'Not found'}
 Python: {os.sys.version}
@@ -158,6 +164,17 @@ Python: {os.sys.version}
         
     except Exception as e:
         await update.message.reply_text(f"❌ Debug error: {str(e)}")
+
+async def test_chrome_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test if Chrome works by checking version"""
+    try:
+        result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            await update.message.reply_text(f"✅ Chrome is working: {result.stdout.strip()}")
+        else:
+            await update.message.reply_text(f"❌ Chrome failed: {result.stderr}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Chrome test error: {str(e)}")
 
 async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Test WebDriver functionality"""
@@ -236,6 +253,7 @@ async def run_bot():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("test", test_command))
     application.add_handler(CommandHandler("debug", debug_command))
+    application.add_handler(CommandHandler("testchrome", test_chrome_command))
     
     # Error handler
     application.add_error_handler(error_handler)
